@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 Delos Data Inc
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <sys/types.h>

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 Delos Data Inc
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 #ifndef LINEAR_REGRESSION_H_
 #define LINEAR_REGRESSION_H_
 

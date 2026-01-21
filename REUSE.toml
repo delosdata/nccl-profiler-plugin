@@ -1,0 +1,34 @@
+version = 1
+SPDX-PackageName = "nccl-profiler-plugin"
+SPDX-PackageSupplier = "Delos Data Inc"
+SPDX-PackageDownloadLocation = "https://github.com/delosdata/nccl-profiler-plugin"
+
+[[annotations]]
+path = [".clang-format", ".clangd", ".gitignore", "tests/.gitignore", "otel/gpu_pcie_exporter/.dockerignore", "otel/grafana.ini"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Delos Data Inc"
+SPDX-License-Identifier = "LicenseRef-FSL-1.1-ALv2"
+
+[[annotations]]
+path = ["README.md", "docs/**.md", "otel/amd-gpu-monitoring/README.md", "otel/gpu_pcie_exporter/README.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Delos Data Inc"
+SPDX-License-Identifier = "LicenseRef-FSL-1.1-ALv2"
+
+[[annotations]]
+path = "otel/dashboards/**.json"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Delos Data Inc"
+SPDX-License-Identifier = "LicenseRef-FSL-1.1-ALv2"
+
+[[annotations]]
+path = ["otel/gpu_pcie_exporter/requirements.txt", "otel/requirements-pipeline.txt", "otel/prometheus-config-generate.yaml.example"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Delos Data Inc"
+SPDX-License-Identifier = "LicenseRef-FSL-1.1-ALv2"
+
+[[annotations]]
+path = "LICENSE"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 Delos Data Inc"
+SPDX-License-Identifier = "LicenseRef-FSL-1.1-ALv2"

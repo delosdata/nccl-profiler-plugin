@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 Delos Data Inc
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 #ifndef MOCK_NCCL_H_
 #define MOCK_NCCL_H_
 

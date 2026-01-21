@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2025 Delos Data Inc
+// SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 #ifndef PROFILER_OTEL_ADAPTER_NCCL_PARAM_H_
 #define PROFILER_OTEL_ADAPTER_NCCL_PARAM_H_
 

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 #
 # Generate Prometheus configuration with dynamic host scrape configs
 #

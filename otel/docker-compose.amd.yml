@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: LicenseRef-FSL-1.1-ALv2
+
 # Used to override the default prometheus configuration when running on AMD hardware that has
 # the amd-gpu-monitoring stack running.
 # Use in conjunction with the prometheus-config-generate.sh script to generate the prometheus configuration
