@@ -221,6 +221,7 @@ set(TEST_SOURCES
     unit/test_profiler_events.cc
     unit/test_edge_cases.cc
     unit/test_race_conditions.cc
+    unit/test_profiler_versions.cc
 )
 
 # Plugin sources needed for tests

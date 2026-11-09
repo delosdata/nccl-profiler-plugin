@@ -25,6 +25,7 @@ static std::map<std::string, int> g_gpu_id_to_rank;
 static std::mutex g_gpu_rank_map_mutex;
 #include "events.h"
 #include "param.h"
+#include "profiler_compat.h"
 #include "telemetry.h"
 
 // =============================================================================
@@ -767,6 +768,7 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v4(void* context, void** eHan
         otel_event->coll.algo                  = eDescr->coll.algo;
         otel_event->coll.proto                 = eDescr->coll.proto;
         otel_event->coll.firstProxyOpCompleted = false;  // Initialize flag
+        otel_event->coll.isCopyEngine          = false;  // Set by the v6/v7 entry points for CE collectives
 
         // Increment in_progress_count by 1 for this Coll
         // ProxyOps will increment it when they start, and the first ProxyOp completion will decrement it twice
@@ -939,6 +941,16 @@ OTEL_HIDDEN ncclResult_t profiler_otel_stop_event_v4(void* eHandle)
             OTEL_TRACE(NCCL_INIT, "Stopped Group [eHandle=%p], duration=%.2f us", eHandle,
                        otel_event->endTs - otel_event->startTs);
         }
+    }
+    // Copy-engine collectives have no ProxyOps that would release their pending-op slot, so release it on stop.
+    else if (otel_event->type == ncclProfileColl && otel_event->coll.isCopyEngine)
+    {
+        if (otel_event->commState)
+        {
+            otel_event->commState->mark_operation_complete(otel_event->buffer_idx);
+        }
+        OTEL_TRACE(NCCL_INIT, "Stopped CE Coll [eHandle=%p] %s, duration=%.2f us (pending ops-=1)", eHandle,
+                   otel_event->coll.func, otel_event->endTs - otel_event->startTs);
     }
     // For ProxyStep with SendWait, show actual transfer time (SendWait -> Stop)
     else if (otel_event->type == ncclProfileProxyStep && otel_event->proxyStep.hasSendWait)
@@ -1162,3 +1174,141 @@ OTEL_HIDDEN ncclResult_t profiler_otel_finalize_v4(void* context)
     return ncclSuccess;
 }
 // end NCCL Profiler Plugin v4
+
+// ============================================================================
+// NCCL Profiler Plugin v5 / v6 / v7
+//
+// NCCL loads the newest profiler version a plugin exports. Older NCCL releases keep using v4. Events that exist in
+// v4 are translated (profiler_compat.h) and handled by the v4 code path above, so metrics are identical across
+// versions. Native support matters for two reasons:
+//  - NCCL's own v4 compatibility shim (src/plugin/profiler/profiler_v4.cc, 2.28 through at least 2.32) builds the v4
+//    descriptor on the stack without copying p2p.nChannels, so a v4-only plugin reads an indeterminate channel count
+//    for every P2P event. Translating here copies it.
+//  - The shim drops event types v4 does not know, including copy-engine (CE) collectives (v6+), which NCCL uses for
+//    zero-SM AllGather/AlltoAll/Scatter/Gather. Those are recorded here as collectives with algo "CE".
+// ============================================================================
+
+#if OTEL_HAS_PROFILER_V5
+
+namespace
+{
+
+// Start an event whose descriptor uses the v5+ layout. Returns ncclSuccess with *eHandle == NULL for event types the
+// plugin does not aggregate (API events, kernel launch/phase events, CE sync/batch sub-events).
+template <typename DescrT>
+ncclResult_t startEventNewerThanV4(void* context, void** eHandle, DescrT* eDescr)
+{
+    *eHandle = NULL;
+    if (context == nullptr || eDescr == nullptr) return ncclSuccess;
+
+    ncclProfilerEventDescr_v4_t descr_v4;
+    if (otel_compat::translateToV4(eDescr, &descr_v4))
+    {
+        return profiler_otel_start_event_v4(context, eHandle, &descr_v4);
+    }
+
+    OTEL_TRACE(NCCL_INIT, "Skipping event type 0x%lx (not used in telemetry aggregation)",
+               (unsigned long)eDescr->type);
+    return ncclSuccess;
+}
+
+#if OTEL_HAS_PROFILER_V6
+// v6/v7: copy-engine collectives are aggregated as collectives; their sync/batch sub-events are not.
+template <typename DescrT>
+ncclResult_t startEventWithCopyEngine(void* context, void** eHandle, DescrT* eDescr)
+{
+    if (eDescr != nullptr && eDescr->type == ncclProfileCeColl)
+    {
+        *eHandle = NULL;
+        if (context == nullptr) return ncclSuccess;
+        ncclProfilerEventDescr_v4_t descr_v4;
+        otel_compat::ceCollToV4(eDescr, &descr_v4);
+        ncclResult_t ret = profiler_otel_start_event_v4(context, eHandle, &descr_v4);
+        if (ret == ncclSuccess && *eHandle != NULL)
+        {
+            ((otelEventHandle_t*)*eHandle)->coll.isCopyEngine = true;
+        }
+        return ret;
+    }
+    return startEventNewerThanV4(context, eHandle, eDescr);
+}
+#endif  // OTEL_HAS_PROFILER_V6
+
+template <typename ArgsT>
+ncclResult_t recordEventStateNewerThanV4(void* eHandle, ncclProfilerEventState_t eState, ArgsT* eStateArgs)
+{
+    ncclProfilerEventStateArgs_v4_t args_v4;
+    otel_compat::translateStateArgsToV4(eState, eStateArgs, &args_v4);
+    return profiler_otel_record_event_state_v4(eHandle, (ncclProfilerEventState_v4_t)eState,
+                                               eStateArgs ? &args_v4 : nullptr);
+}
+
+}  // namespace
+
+OTEL_HIDDEN ncclResult_t profiler_otel_init_v5(void** context, uint64_t commId, int* eActivationMask,
+                                               const char* commName, int nNodes, int nranks, int rank,
+                                               ncclDebugLogger_t logfn)
+{
+    return profiler_otel_init_v4(context, eActivationMask, commName, commId, nNodes, nranks, rank, logfn);
+}
+
+OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHandle,
+                                                      ncclProfilerEventDescr_v5_t* eDescr)
+{
+    return startEventNewerThanV4(context, eHandle, eDescr);
+}
+
+OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v5(void* eHandle, ncclProfilerEventState_v5_t eState,
+                                                             ncclProfilerEventStateArgs_v5_t* eStateArgs)
+{
+    return recordEventStateNewerThanV4(eHandle, eState, eStateArgs);
+}
+
+#endif  // OTEL_HAS_PROFILER_V5
+
+#if OTEL_HAS_PROFILER_V6
+
+OTEL_HIDDEN ncclResult_t profiler_otel_init_v6(void** context, uint64_t commId, int* eActivationMask,
+                                               const char* commName, int nNodes, int nranks, int rank,
+                                               ncclDebugLogger_t logfn)
+{
+    ncclResult_t ret = profiler_otel_init_v4(context, eActivationMask, commName, commId, nNodes, nranks, rank, logfn);
+    // Default mask: also profile copy-engine collectives. An explicit NCCL_PROFILE_EVENT_MASK is used as given.
+    if (ret == ncclSuccess && *context != nullptr && OTEL_GET_PARAM(ProfileEventMask) < 0)
+    {
+        int mask = __atomic_load_n(eActivationMask, __ATOMIC_RELAXED) | ncclProfileCeColl;
+        __atomic_store_n(eActivationMask, mask, __ATOMIC_RELAXED);
+    }
+    return ret;
+}
+
+OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v6(void* context, void** eHandle,
+                                                      ncclProfilerEventDescr_v6_t* eDescr)
+{
+    return startEventWithCopyEngine(context, eHandle, eDescr);
+}
+
+OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v6(void* eHandle, ncclProfilerEventState_v6_t eState,
+                                                             ncclProfilerEventStateArgs_v6_t* eStateArgs)
+{
+    return recordEventStateNewerThanV4(eHandle, eState, eStateArgs);
+}
+
+#endif  // OTEL_HAS_PROFILER_V6
+
+#if OTEL_HAS_PROFILER_V7
+
+OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v7(void* context, void** eHandle,
+                                                      ncclProfilerEventDescr_v7_t* eDescr)
+{
+    return startEventWithCopyEngine(context, eHandle, eDescr);
+}
+
+OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v7(void* eHandle, ncclProfilerEventState_v7_t eState,
+                                                             ncclProfilerEventStateArgs_v7_t* eStateArgs)
+{
+    return recordEventStateNewerThanV4(eHandle, eState, eStateArgs);
+}
+
+#endif  // OTEL_HAS_PROFILER_V7
+// end NCCL Profiler Plugin v5 / v6 / v7

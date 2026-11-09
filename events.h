@@ -50,6 +50,7 @@ typedef struct
             const char* algo;
             const char* proto;
             bool firstProxyOpCompleted;  // Flag to track if first ProxyOp has completed (for in_progress_count)
+            bool isCopyEngine;           // Copy-engine collective (profiler v6+): no ProxyOps, completes on stop
         } coll;
         struct
         {

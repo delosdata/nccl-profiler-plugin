@@ -4,7 +4,7 @@ The NCCL Profiler OTEL Plugin is a profiling extension for NVIDIA's NCCL (NVIDIA
 
 ## Overview
 
-This plugin implements the NCCL Profiler Plugin v4 interface and provides:
+This plugin implements the NCCL Profiler Plugin interfaces v4 through v7 (v5-v7 are compiled in when the NCCL headers provide them; NCCL uses the newest version both sides support) and provides:
 
 - **Real-time Metrics Collection**: Captures NCCL collective, P2P, and proxy operation metrics
 - **OpenTelemetry Integration**: Exports metrics to OpenTelemetry collectors via HTTP
@@ -213,9 +213,10 @@ The plugin uses several environment variables for configuration. All variables u
     - `0x04`: Point-to-point operations (ncclProfileP2p)
     - `0x08`: Proxy operations (ncclProfileProxyOp)
     - `0x10`: Proxy step operations (ncclProfileProxyStep)
+    - `0x1000`: Copy-engine collectives (ncclProfileCeColl, profiler v6+)
   - Default auto-configuration: `0x1E` (Coll + P2P + ProxyOp + ProxyStep)
   - Example: `export NCCL_PROFILE_EVENT_MASK=0x1E`
-  - Note: The plugin automatically configures this mask unless explicitly set. `ncclProfileProxyCtrl` (0x20) is not tracked as it doesn't contribute to metrics. `ncclProfileGroup` (0x01) is supported (a handle is returned for correct parent-chain behavior) but it is not exported as a metric.
+  - Note: The plugin automatically configures this mask unless explicitly set. `ncclProfileProxyCtrl` (0x20) is not tracked as it doesn't contribute to metrics. `ncclProfileGroup` (0x01) is supported (a handle is returned for correct parent-chain behavior) but it is not exported as a metric. When NCCL loads the plugin through profiler v6 or v7, the default mask also includes `ncclProfileCeColl` (0x1000), i.e. `0x101E`.
 
 #### Library Path Configuration
 - **`LD_LIBRARY_PATH`**
@@ -267,7 +268,7 @@ export LD_LIBRARY_PATH=/usr/local/plugins/lib:$LD_LIBRARY_PATH
 The plugin is organized into several key components:
 
 ### Core Plugin Interface (`profiler_otel.h` / `profiler_otel.cc`)
-- **Purpose**: Implements the NCCL Profiler Plugin v4 interface
+- **Purpose**: Implements the NCCL Profiler Plugin v4 interface, plus v5/v6/v7 entry points that translate newer event descriptors (`profiler_compat.h`) into the same code path
 - **Key Functions**:
   - `profiler_otel_init_v4()`: Initialize plugin for a communicator
   - `profiler_otel_start_event_v4()`: Handle event start (Coll, P2P, ProxyOp, ProxyStep, Group)
@@ -335,7 +336,13 @@ The plugin is organized into several key components:
 
 ### Plugin Registration (`nccl_plugin.cc`)
 - **Purpose**: Register plugin with NCCL
-- **Structure**: `ncclProfiler_v4` structure exported to NCCL
+- **Structure**: `ncclProfiler_v4` structure exported to NCCL, plus `ncclProfiler_v5`, `ncclProfiler_v6` and `ncclProfiler_v7` when built against NCCL headers that define them (NCCL 2.28+ for v5, 2.31+ for v7)
+
+### NCCL Profiler Interface Versions (`profiler_compat.h`)
+- NCCL looks up `ncclProfiler_v7` first and falls back to older versions, so one build works with NCCL 2.27 (v4) and newer releases.
+- Events that exist in v4 (Group, Coll, P2p, ProxyOp, ProxyStep, ProxyCtrl, KernelCh, NetPlugin) are translated field by field and handled exactly as in v4. Like NCCL's own v4 shim, Coll/P2p events take their parent from `parentGroup`.
+- Why native support matters on newer NCCL: NCCL's v4 compatibility shim does not copy `p2p.nChannels` (the v4 descriptor is built on the stack), so a v4-only plugin sees an indeterminate channel count on P2P events; and the shim drops copy-engine collectives entirely.
+- Copy-engine (CE) collectives (v6+, used by NCCL's zero-SM AllGather/AlltoAll/Scatter/Gather paths) are recorded as collectives with algo `CE` and the sync strategy (`MC` multicast or `UC` unicast) in the protocol slot, e.g. `Comm<hash>_AllGather_CE_UC_0Chnl`. They have no ProxyOps, so their duration uses the same Coll start to stop timing as the existing internal-links path, and their pending-op slot is released when the event stops. CE sync/batch sub-events, API events (GroupApi/CollApi/P2pApi/KernelLaunch) and v7 kernel phase events are not aggregated and get no handle.
 
 ### Configuration (`param.h`)
 - **Purpose**: Environment variable parameter loading
